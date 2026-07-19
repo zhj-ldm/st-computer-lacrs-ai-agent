@@ -1,8 +1,8 @@
 
-# st-computer-lacrs-ai-agent
+# st-computer-lcars-ai-agent
 
 
-star trek ds9 lacrs风格 ，类似open claw的AI 语音助手，的支持本地语音识别、大语言模型对话、TTS 朗读，并配有常规 Web 对话和管理设置界面。
+star trek ds9 lcars风格 ，类似open claw的AI 语音助手，的支持本地语音识别、大语言模型对话、TTS 朗读，并配有常规 Web 对话和管理设置界面。
 未来将要支持 ESP32 / Arduino 分布式拾音、扬声器节点，实现全屋任意位置唤醒 AI、内网家电设备控制。
 
 ## 功能
