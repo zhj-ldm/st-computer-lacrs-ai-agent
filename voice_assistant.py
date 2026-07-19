@@ -44,7 +44,7 @@ STOP_ENERGY_THRESHOLD = 1200   # RMS 能量阈值，高于此值约 320ms 即触
 STOP_MIN_FRAMES = 4            # 连续超过阈值的帧数（0.08s × 4 ≈ 320ms）
 
 # ── API ───────────────────────────────────────
-API_BASE = "http://127.0.0.1:5000"
+API_BASE = "http://127.0.0.1:8086"
 CONV_TITLE = "语音对话"
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
@@ -84,7 +84,7 @@ def play_wav(path):
 def _run_flask():
     sys.path.insert(0, BASE_DIR)
     from app import app
-    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+    app.run(host="127.0.0.1", port=8086, debug=False, use_reloader=False)
 
 
 def wait_flask(timeout=10):
@@ -846,7 +846,7 @@ if __name__ == "__main__":
     if not wait_flask():
         print("[错误] Flask 启动超时")
         sys.exit(1)
-    print("[启动] Web 服务就绪 (http://127.0.0.1:5000)")
+    print("[启动] Web 服务就绪 (http://127.0.0.1:8086)")
 
     # 2. 获取/创建语音对话
     conv_id = get_or_create_voice_conv()

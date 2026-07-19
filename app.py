@@ -600,5 +600,7 @@ def api_list_voices():
     except Exception as e:
         return jsonify([])
 
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=8086, debug=False)
