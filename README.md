@@ -1,7 +1,8 @@
 
-# 语音助手 (Voice Assistant)
+# st-computer-lacrs-ai-agent
 
-基于唤醒词驱动的桌面 AI 语音助手，支持本地语音识别、大语言模型对话、TTS 朗读，并配有 Web 管理界面。
+
+星际迷航ds9lacrs风格 AI 语音助手，支持本地语音识别、大语言模型对话、TTS 朗读，并配有常规 Web 对话和管理设置界面。
 未来将要支持 ESP32 / Arduino 分布式拾音、扬声器节点，实现全屋任意位置唤醒 AI、内网家电设备控制。
 
 ## 功能
