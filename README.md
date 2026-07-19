@@ -1,11 +1,14 @@
-
 # st-lacrs-ai-agent
 
-st lacrs 风格的类 Open Claw AI 工具，可实时监听语音（"hey computer"）唤醒 AI，AI 可修改读取本地文件、执行命令行指令、联网搜索等。正在开发未来支持分布式拾音扩音拓展，实现全屋任意位置实时呼出 AI 并对家电进行控制。
+st lacrs 风格的类 Open Claw AI 工具，可实时监听语音（"hey computer"）唤醒 AI，AI 可修改读取本地文件、执行命令行指令、联网搜索等。
+
+> **开发状态说明**：以下内容中，**未标注**的模块为已实现/已有功能；标注 **「🚧 开发中」** 的为正在开发或规划中的目标，尚未实际完成。
 
 ---
 
 ## 功能
+
+### 已实现
 
 | 模块 | 说明 |
 |------|------|
@@ -18,12 +21,19 @@ st lacrs 风格的类 Open Claw AI 工具，可实时监听语音（"hey compute
 | 语音打断 | 朗读期间大声说话即可打断，自动切回聆听 |
 | 多对话管理 | 创建 / 切换 / 删除对话，语音或 Web 均可操作 |
 | Web 管理界面 | 浏览器查看对话历史、手动发送消息、管理对话 |
-| **分布式拾音扩音** | ESP32 节点部署于各房间，内网 UDP/TCP 音频流传输，全屋任意位置唤醒 |
-| **家电控制** | AI 通过 ESP32 节点控制继电器、红外、传感器等外设，实现全屋智能联动 |
+
+### 🚧 开发中 / 规划中
+
+| 模块 | 说明 |
+|------|------|
+| 分布式拾音扩音 | ESP32 节点部署于各房间，内网 UDP/TCP 音频流传输，全屋任意位置唤醒 |
+| 家电控制 | AI 通过 ESP32 节点控制继电器、红外、传感器等外设，实现全屋智能联动 |
 
 ---
 
 ## 技术栈
+
+### 已实现
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -36,19 +46,72 @@ st lacrs 风格的类 Open Claw AI 工具，可实时监听语音（"hey compute
 │  Web 前端        HTML + 原生 JS (SSE 流式)           │
 │  搜索引擎        DuckDuckGo (ddgs)                   │
 │  运行环境        Windows 10/11, Python 3.9+          │
-│  ─────────────────────────────────────────────────── │
+└──────────────────────────────────────────────────────┘
+```
+
+### 🚧 开发中 / 规划中
+
+```
+┌──────────────────────────────────────────────────────┐
 │  分布式节点      ESP32-DevKitC / ESP32-S3            │
 │  节点固件        Arduino (PlatformIO / Arduino IDE)  │
 │  节点通信        内网 UDP（音频流）+ TCP（控制指令）  │
-│  节点音频        I2S MEMS 麦克风 (INMP441) + I2S 功放 (MAX98357A) │
-│  家电控制        GPIO 继电器 / 红外发射管 / UART 传感器 │
-│  中心协议        JSON over TCP 指令集 + 自定义音频流格式 │
+│  节点音频        I2S MEMS 麦克风 (INMP441)           │
+│                  + I2S 功放 (MAX98357A)              │
+│  家电控制        GPIO 继电器 / 红外发射管             │
+│                  / UART 传感器                       │
+│  中心协议        JSON over TCP 指令集                │
+│                  + 自定义音频流格式                   │
 └──────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 程序运行流程
+
+### 当前流程（已实现）
+
+```
+启动 app.py（Web 服务，端口 5000）
+         │
+启动 voice_assistant.py（语音助手主循环）
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  监听麦克风                          │
+│  等待唤醒词 "hey_computer"          │
+│  （唤醒前 ~3% CPU）                  │
+└──────────────┬──────────────────────┘
+               │ 检测到唤醒词
+               ▼
+┌─────────────────────────────────────┐
+│  播放提示音 wake_sound.wav           │
+│  录制音频至静音 1.5s 或超时 15s      │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  faster-whisper 转写为文本           │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  发送到 LLM API（带对话历史）        │
+│  AI 可能调用工具（搜索/文件/Shell）  │
+│  工具结果回传 AI，生成最终回复        │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  SAPI5 TTS 朗读回复                  │
+│  → 可被打断（大声说话触发）           │
+│  → 唤醒词工具调用可改语速/音色       │
+└──────────────┬──────────────────────┘
+               │
+               ▼ 回到监听，等待下一次唤醒
+```
+
+### 🚧 目标流程（开发中，含分布式拓展）
 
 ```
 启动 app.py（Web 服务，端口 5000）
@@ -101,19 +164,21 @@ st lacrs 风格的类 Open Claw AI 工具，可实时监听语音（"hey compute
 ```
 st-lacrs-ai-agent/
 ├── app.py                    # Flask Web 服务 + AI 工具
-├── voice_assistant.py        # 语音助手主程序（含分布式逻辑）
-├── udp_audio_server.py       # UDP 音频流接收服务
-├── node_manager.py           # ESP32 节点管理（心跳/指令/注册）
-├── home_control.py           # 家电控制工具集（AI Tool 注册）
+├── voice_assistant.py        # 语音助手主程序
 ├── install_deps.py           # 依赖一键安装脚本
 ├── templates/
-│   └── index.html            # Web 管理界面（含节点状态面板）
+│   └── index.html            # Web 管理界面
 ├── data/
 │   ├── config.json           # 配置文件
-│   ├── nodes.json            # 已注册 ESP32 节点信息
 │   ├── complete.wav          # AI 回复提示音
 │   ├── wake_sound.wav        # 唤醒提示音
 │   └── conversations/        # 对话历史 (JSON)
+│
+│   ═══════════════ 🚧 以下为开发中 ═══════════════
+│
+├── udp_audio_server.py       # UDP 音频流接收服务
+├── node_manager.py           # ESP32 节点管理（心跳/指令/注册）
+├── home_control.py           # 家电控制工具集（AI Tool 注册）
 ├── firmware/                 # ESP32 固件源码
 │   ├── st_lacrs_node/
 │   │   ├── st_lacrs_node.ino        # Arduino 主固件
@@ -137,7 +202,7 @@ st-lacrs-ai-agent/
 - Windows 10 或 Windows 11
 - Python 3.9 及以上
 - 麦克风和扬声器
-- Wi-Fi 路由器（用于 ESP32 节点通信）
+- 🚧 分布式拓展额外要求：Wi-Fi 路由器（用于 ESP32 节点通信）
 
 ### 2. 安装依赖
 
@@ -174,17 +239,6 @@ pip install flask requests numpy pywin32 openwakeword pyaudio faster-whisper
     "wake": {
         "threshold": 0.15,
         "stop_energy_threshold": 1200
-    },
-    "nodes": {
-        "udp_audio_port": 5555,
-        "tcp_command_port": 5556,
-        "max_nodes": 8,
-        "node_timeout_seconds": 30,
-        "audio_format": "PCM_16K_16BIT_MONO"
-    },
-    "home_control": {
-        "mqtt_broker": null,
-        "ir_remote_config": "data/ir_codes.json"
     }
 }
 ```
@@ -199,11 +253,24 @@ pip install flask requests numpy pywin32 openwakeword pyaudio faster-whisper
 | `tts.volume` | 音量 0~100 |
 | `wake.threshold` | 唤醒词灵敏度（越低越灵敏） |
 | `wake.stop_energy_threshold` | 语音打断灵敏度，RMS 能量值 |
-| `nodes.udp_audio_port` | UDP 音频流接收端口 |
-| `nodes.tcp_command_port` | TCP 控制指令端口 |
-| `nodes.max_nodes` | 最大节点数 |
-| `nodes.node_timeout_seconds` | 节点心跳超时（秒） |
-| `home_control.mqtt_broker` | MQTT Broker 地址（可选，用于兼容 HomeAssistant） |
+
+🚧 分布式拓展规划配置（开发完成后将合并到 config.json）：
+
+```json
+{
+    "nodes": {
+        "udp_audio_port": 5555,
+        "tcp_command_port": 5556,
+        "max_nodes": 8,
+        "node_timeout_seconds": 30,
+        "audio_format": "PCM_16K_16BIT_MONO"
+    },
+    "home_control": {
+        "mqtt_broker": null,
+        "ir_remote_config": "data/ir_codes.json"
+    }
+}
+```
 
 ### 4. 首次运行
 
@@ -215,21 +282,25 @@ pip install flask requests numpy pywin32 openwakeword pyaudio faster-whisper
 # 终端一：启动 Web 服务
 python app.py
 
-# 终端二：启动语音助手（含分布式节点管理服务）
+# 终端二：启动语音助手
 python voice_assistant.py
+```
 
+启动后：
+- 浏览器访问 `http://127.0.0.1:5000` 查看对话管理界面
+- 对着麦克风说 **"hey computer"** 唤醒助手
+- 听到提示音后说出你的问题
+- AI 回复会通过扬声器朗读
+- 朗读期间大声说话可打断
+
+🚧 分布式拓展启动（开发中）：
+
+```powershell
 # 终端三（可选，可合并至 voice_assistant.py 独立线程）：
 python udp_audio_server.py
 ```
 
-启动后：
-- 浏览器访问 `http://127.0.0.1:5000` 查看对话管理界面及节点状态面板
-- 对着麦克风说 **"hey computer"** 唤醒助手（电脑端或任意 ESP32 节点）
-- 听到提示音后说出你的问题
-- AI 回复会通过扬声器朗读（本地 + 唤醒节点）
-- 朗读期间大声说话可打断
-
-### 6. ESP32 节点烧录
+🚧 ESP32 节点烧录（开发中）：
 
 ```bash
 # 使用 PlatformIO（推荐）
@@ -247,27 +318,31 @@ pio run -t upload --upload-port COM3
 
 唤醒后可直接用自然语言说出：
 
-| 命令示例 | 功能 |
-|----------|------|
-| "帮我搜索一下今天天气" | AI 调用搜索引擎 |
-| "读一下桌面上的 readme.txt" | AI 读取文件 |
-| "把结果写入 result.txt" | AI 写入文件 |
-| "语速快一点" | 调快 TTS 语速 |
-| "换成 David 的声音" | 切换 TTS 音色 |
-| "新建一个对话" | 创建新对话 |
-| "切换到上一个对话" | 切换对话 |
-| "删除当前对话" | 删除对话 |
-| "打开客厅的灯" | 控制客厅 ESP32 节点的继电器 |
-| "把卧室空调调到 26 度" | 通过 ESP32 红外发射控制空调 |
-| "关闭所有灯" | 批量控制所有照明节点 |
-| "客厅温度是多少" | 读取客厅 ESP32 节点的 DHT22 传感器 |
-| "开启影院模式" | 执行预设场景（关灯+关窗帘+开投影） |
+| 命令示例 | 功能 | 状态 |
+|----------|------|------|
+| "帮我搜索一下今天天气" | AI 调用搜索引擎 | 已实现 |
+| "读一下桌面上的 readme.txt" | AI 读取文件 | 已实现 |
+| "把结果写入 result.txt" | AI 写入文件 | 已实现 |
+| "语速快一点" | 调快 TTS 语速 | 已实现 |
+| "换成 David 的声音" | 切换 TTS 音色 | 已实现 |
+| "新建一个对话" | 创建新对话 | 已实现 |
+| "切换到上一个对话" | 切换对话 | 已实现 |
+| "删除当前对话" | 删除对话 | 已实现 |
+| "打开客厅的灯" | 控制客厅 ESP32 节点的继电器 | 🚧 开发中 |
+| "把卧室空调调到 26 度" | 通过 ESP32 红外发射控制空调 | 🚧 开发中 |
+| "关闭所有灯" | 批量控制所有照明节点 | 🚧 开发中 |
+| "客厅温度是多少" | 读取客厅 ESP32 节点的 DHT22 传感器 | 🚧 开发中 |
+| "开启影院模式" | 执行预设场景（关灯+关窗帘+开投影） | 🚧 开发中 |
 
 ---
 
-## 分布式拾音扩音架构预想
+# 🚧 以下为开发中 / 规划中的分布式拓展设计
 
-### 整体拓扑
+> 以下内容为设计方案与预期目标，**尚未开发完成**。当前方案基于 **ESP32 内网 IP 连接 + Arduino 编写固件**，目标是实现全屋任意位置实时呼出 AI 并对家电进行控制。
+
+---
+
+## 分布式拾音扩音 — 整体拓扑（规划）
 
 ```
                         ┌─────────────────────────┐
@@ -288,9 +363,11 @@ pio run -t upload --upload-port COM3
     └──────────────────┘  └──────────────────┘  └──────────────────────────┘
 ```
 
-### 通信协议
+---
 
-#### 节点注册（TCP，节点 → 中心）
+## 通信协议（规划）
+
+### 节点注册（TCP，节点 → 中心）
 
 ```json
 {
@@ -303,7 +380,7 @@ pio run -t upload --upload-port COM3
 }
 ```
 
-#### 心跳（TCP，节点 → 中心，每 5s）
+### 心跳（TCP，节点 → 中心，每 5s）
 
 ```json
 {
@@ -315,7 +392,7 @@ pio run -t upload --upload-port COM3
 }
 ```
 
-#### 控制指令（TCP，中心 → 节点）
+### 控制指令（TCP，中心 → 节点）
 
 ```json
 {
@@ -344,7 +421,7 @@ pio run -t upload --upload-port COM3
 }
 ```
 
-#### 音频流（UDP，节点 → 中心）
+### 音频流（UDP，节点 → 中心）（规划）
 
 ```
 帧格式（固定 320 字节）：
@@ -358,7 +435,7 @@ pio run -t upload --upload-port COM3
 帧率: ~106 fps
 ```
 
-#### TTS 音频广播（UDP，中心 → 所有节点）
+### TTS 音频广播（UDP，中心 → 所有节点）（规划）
 
 ```
 帧格式：
@@ -372,7 +449,23 @@ pio run -t upload --upload-port COM3
 
 ---
 
-## ESP32 节点硬件设计
+## 节点自动发现（规划）
+
+ESP32 节点上电后通过 UDP 广播注册：
+
+```
+1. ESP32 启动 → 连接 WiFi
+2. 发送 UDP 广播 (255.255.255.255:5557) 注册包
+3. 中心主机监听 5557 端口，收到注册后回复确认
+4. 建立 TCP 长连接 (端口 5556)，开始心跳 + 指令通信
+5. 中心将节点信息写入 data/nodes.json
+```
+
+无需手动配置 IP，节点即插即用。
+
+---
+
+## ESP32 节点硬件设计（规划）
 
 ### 核心物料清单
 
@@ -444,7 +537,7 @@ ESP32 DevKit V4
 
 ---
 
-## ESP32 固件核心逻辑
+## ESP32 固件核心逻辑（规划）
 
 ### Arduino 主循环 (`st_lacrs_node.ino`)
 
@@ -564,7 +657,7 @@ void executeCommand(const String& action, const JsonObject& params);
 
 ---
 
-## 家电控制工具集 (`home_control.py`)
+## 家电控制工具集 — `home_control.py`（规划）
 
 作为 AI 工具的注册模块，让 LLM 可以直接调用家电控制：
 
@@ -609,7 +702,7 @@ tools = [
 ]
 ```
 
-### 场景预设配置
+### 场景预设配置（规划）
 
 ```json
 {
@@ -637,23 +730,7 @@ tools = [
 
 ---
 
-## 节点自动发现
-
-ESP32 节点上电后通过 UDP 广播注册：
-
-```
-1. ESP32 启动 → 连接 WiFi
-2. 发送 UDP 广播 (255.255.255.255:5557) 注册包
-3. 中心主机监听 5557 端口，收到注册后回复确认
-4. 建立 TCP 长连接 (端口 5556)，开始心跳 + 指令通信
-5. 中心将节点信息写入 data/nodes.json
-```
-
-无需手动配置 IP，节点即插即用。
-
----
-
-## 性能指标
+## 预期性能指标（规划）
 
 | 指标 | 目标值 | 备注 |
 |------|--------|------|
@@ -664,4 +741,3 @@ ESP32 节点上电后通过 UDP 广播注册：
 | 单节点最大距离 | 视 Wi-Fi 覆盖 | 建议同网段，< 30m 无遮挡 |
 | 最大节点数 | 8 | 受 UDP 带宽限制，可扩展 |
 | 语音识别准确率 | > 95% (安静环境) | faster-whisper small |
-
