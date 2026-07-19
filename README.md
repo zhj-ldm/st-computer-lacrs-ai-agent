@@ -1,15 +1,4 @@
 # st-lacrs-ai-agent
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 8b9e75a82870995132d83fa94245b350_a5882474836f11f18a64525400826444
-    ReservedCode1: 1lpJg5XDA+3M2YI2+4bMpPDmxPGIGJoVW3BRrfVXj9pq/QlfTOzSeNVAna+WwcQMn38obuIJhSBLhb1AWdD4WFCH5CKE3yrWMe/s6URcYRl6AWvddNnvpyjSv54AzBCQzHzwzxQOCn2v9g+p0sIZvwzoIULsmp2X3k24DPGF4WeTBaDpBOCGL5TGIWA=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 8b9e75a82870995132d83fa94245b350_a5882474836f11f18a64525400826444
-    ReservedCode2: 1lpJg5XDA+3M2YI2+4bMpPDmxPGIGJoVW3BRrfVXj9pq/QlfTOzSeNVAna+WwcQMn38obuIJhSBLhb1AWdD4WFCH5CKE3yrWMe/s6URcYRl6AWvddNnvpyjSv54AzBCQzHzwzxQOCn2v9g+p0sIZvwzoIULsmp2X3k24DPGF4WeTBaDpBOCGL5TGIWA=
----
-# st-lacrs-ai-agent
 st lacrs风格的类似open claw的ai工具，可实时监听语音（hey_computer）唤醒ai，ai可修改读区本地文件，执行命令行指令，联网搜索等，
 
 ## 功能
