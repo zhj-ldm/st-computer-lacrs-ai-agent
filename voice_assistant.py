@@ -39,10 +39,6 @@ WAKE_WORD = "hey_computer"
 WAKE_MODEL_PATH = r"C:\Users\zhaoz\AppData\Local\Programs\Python\Python39\Lib\site-packages\openwakeword\resources\models\hey_computer.onnx"
 WAKE_THRESHOLD = 0.15
 
-# ── 打断 (Stop) ─────────────────────────────
-STOP_ENERGY_THRESHOLD = 1200   # RMS 能量阈值，高于此值约 320ms 即触发打断
-STOP_MIN_FRAMES = 4            # 连续超过阈值的帧数（0.08s × 4 ≈ 320ms）
-
 # ── API ───────────────────────────────────────
 API_BASE = "http://127.0.0.1:8086"
 CONV_TITLE = "语音对话"
@@ -374,18 +370,17 @@ class VoiceAssistant:
         self.speaking = False       # TTS 朗读期间暂停唤醒词检测
         self.tts_active = False     # TTS 后台线程是否在播
         self.tts_stop_flag = False  # 语音打断标志
-        self._stop_energy_frames = 0  # 连续高能量帧计数（打断检测）
-        self._speak_start_time = 0    # TTS 开始时间（用于屏蔽前 0.8s 回声）
 
         # 从配置文件读取阈值
         try:
             cfg = load_config()
             w = cfg.get("wake", {})
-            global WAKE_THRESHOLD, STOP_ENERGY_THRESHOLD
+            global WAKE_THRESHOLD, SILENCE_THRESHOLD, SILENCE_SEC, SILENCE_FRAMES
             WAKE_THRESHOLD = w.get("threshold", WAKE_THRESHOLD)
-            STOP_ENERGY_THRESHOLD = w.get("stop_energy_threshold", STOP_ENERGY_THRESHOLD)
-            if "threshold" in w:
-                print(f"[配置] 唤醒阈值={WAKE_THRESHOLD}, 打断阈值={STOP_ENERGY_THRESHOLD}")
+            SILENCE_THRESHOLD = w.get("silence_threshold", SILENCE_THRESHOLD)
+            SILENCE_SEC = w.get("silence_sec", SILENCE_SEC)
+            SILENCE_FRAMES = int(SILENCE_SEC / CHUNK_DURATION)
+            print(f"[配置] 唤醒={WAKE_THRESHOLD}, 静音阈值={SILENCE_THRESHOLD}, 静音时长={SILENCE_SEC}s")
         except Exception:
             pass
 
@@ -431,7 +426,6 @@ class VoiceAssistant:
 
         self.tts_stop_flag = False
         self.tts_active = True
-        self._speak_start_time = time.time()  # 记录开始时间，前 2s 屏蔽打断检测
 
         def _speak_worker():
             import pythoncom
@@ -712,22 +706,8 @@ class VoiceAssistant:
                 data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
 
                 if self.speaking:
-                    if self.tts_active:
-                        # TTS 播放中 → 能量检测打断（前 2s 屏蔽，避免 TTS 自身回声误触发）
-                        if time.time() - self._speak_start_time < 2.0:
-                            self._stop_energy_frames = 0
-                        else:
-                            audio_np = np.frombuffer(data, dtype=np.int16)
-                            if rms(audio_np) > STOP_ENERGY_THRESHOLD:
-                                self._stop_energy_frames += 1
-                                if self._stop_energy_frames >= STOP_MIN_FRAMES:
-                                    self.tts_stop_flag = True
-                                    self._stop_energy_frames = 0
-                                    print(f"[打断] 检测到语音（能量超过 {STOP_ENERGY_THRESHOLD}）")
-                            else:
-                                self._stop_energy_frames = max(0, self._stop_energy_frames - 1)
-                    else:
-                        # TTS 线程已结束 → 快速回到监听
+                    if not self.tts_active:
+                        # TTS 播放完毕 → 回到监听
                         print("[完成] 本轮结束，回到监听\n")
                         if self.oww is not None:
                             self.oww.reset()

@@ -1104,6 +1104,16 @@ body.lcars-theme #toast { background: #fc6; color: #000; border-radius: 0; font-
           <input type="range" id="cfg-stop-threshold" min="100" max="5000" step="100" oninput="document.getElementById('stop-threshold-val').textContent=this.value">
           <span style="font-size:13px;">Current: <span id="stop-threshold-val">1200</span></span>
         </div>
+        <div class="form-group">
+          <label>Silence Threshold (50 ~ 2000)</label>
+          <input type="range" id="cfg-silence-threshold" min="50" max="2000" step="10" oninput="document.getElementById('silence-threshold-val').textContent=this.value">
+          <span style="font-size:13px;">Current: <span id="silence-threshold-val">400</span></span>
+        </div>
+        <div class="form-group">
+          <label>Silence Seconds (0.5 ~ 5.0)</label>
+          <input type="range" id="cfg-silence-sec" min="0.5" max="5.0" step="0.1" oninput="document.getElementById('silence-sec-val').textContent=this.value">
+          <span style="font-size:13px;">Current: <span id="silence-sec-val">1.5</span>s</span>
+        </div>
       </div>
       <div class="settings-tab-content" id="tab-appearance">
         <div class="theme-toggle-row">
@@ -1458,6 +1468,10 @@ function populateSettings(cfg) {
   document.getElementById('wake-threshold-val').textContent = wake.threshold != null ? wake.threshold : 0.15;
   document.getElementById('cfg-stop-threshold').value = wake.stop_energy_threshold != null ? wake.stop_energy_threshold : 1200;
   document.getElementById('stop-threshold-val').textContent = wake.stop_energy_threshold != null ? wake.stop_energy_threshold : 1200;
+  document.getElementById('cfg-silence-threshold').value = wake.silence_threshold != null ? wake.silence_threshold : 400;
+  document.getElementById('silence-threshold-val').textContent = wake.silence_threshold != null ? wake.silence_threshold : 400;
+  document.getElementById('cfg-silence-sec').value = wake.silence_sec != null ? wake.silence_sec : 1.5;
+  document.getElementById('silence-sec-val').textContent = (wake.silence_sec != null ? wake.silence_sec : 1.5) + 's';
 
   fetch('/api/voices').then(function(r){ return r.json(); }).then(function(voices){
     var sel = document.getElementById('cfg-voice');
@@ -1495,6 +1509,8 @@ async function saveSettings() {
   var wake = {
     threshold: parseFloat(document.getElementById('cfg-wake-threshold').value) || 0.15,
     stop_energy_threshold: parseInt(document.getElementById('cfg-stop-threshold').value) || 1200,
+    silence_threshold: parseInt(document.getElementById('cfg-silence-threshold').value) || 400,
+    silence_sec: parseFloat(document.getElementById('cfg-silence-sec').value) || 1.5,
   };
   try {
     var resp = await fetch('/api/config', {

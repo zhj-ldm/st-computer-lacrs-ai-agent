@@ -3,9 +3,11 @@
 用法：双击运行 或 python install_deps.py
 """
 
+import os
 import subprocess
 import sys
 import importlib.metadata
+import urllib.request
 
 # ── 依赖清单（PyPI 包名 → import 名） ──
 DEPS = [
@@ -17,6 +19,43 @@ DEPS = [
     ("pyaudio",         "pyaudio"),
     ("faster-whisper",  "faster_whisper"),
 ]
+
+
+def download_hey_computer_model():
+    """
+    通过 hf-mirror.com 镜像下载 openwakeword 的 hey_computer 唤醒词模型。
+    目标目录不存在时自动创建，文件已存在时跳过下载。
+    """
+    MODEL_URL = (
+        "https://hf-mirror.com/fwartner/openwakeword-models"
+        "/resolve/main/hey_compute.onnx"
+    )
+    MODEL_FILENAME = "hey_computer.onnx"
+
+    try:
+        import openwakeword
+    except ImportError:
+        print("\n⚠ openwakeword 未安装，跳过模型下载。")
+        return
+
+    try:
+        pkg_dir = os.path.dirname(openwakeword.__file__)
+        target_dir = os.path.join(pkg_dir, "resources", "models")
+        target_path = os.path.join(target_dir, MODEL_FILENAME)
+
+        if os.path.exists(target_path):
+            print(f"\n唤醒词模型已存在：{target_path}")
+            return
+
+        os.makedirs(target_dir, exist_ok=True)
+        print(f"\n下载唤醒词模型：{MODEL_FILENAME} ...")
+        print(f"  源：{MODEL_URL}")
+        print(f"  目标：{target_path}")
+
+        urllib.request.urlretrieve(MODEL_URL, target_path)
+        print("  下载完成")
+    except Exception as e:
+        print(f"  模型下载失败：{e}")
 
 
 def check_all():
@@ -46,6 +85,7 @@ def main():
 
     if not missing:
         print("\n所有依赖均已就绪。")
+        download_hey_computer_model()
         input("\n按回车退出...")
         return
 
@@ -71,10 +111,19 @@ def main():
             # pyaudio 常见失败，尝试 pipwin
             if pkg == "pyaudio":
                 print("  常规安装失败，尝试 pipwin 方式 ...")
-                subprocess.run([sys.executable, "-m", "pip", "install", "pipwin"], capture_output=True)
-                subprocess.run([sys.executable, "-m", "pipwin", "install", "pyaudio"], capture_output=True)
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "pipwin"],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [sys.executable, "-m", "pipwin", "install", "pyaudio"],
+                    capture_output=True,
+                )
             else:
-                print(f"  安装失败：{result.stderr.splitlines()[-1] if result.stderr else '未知错误'}")
+                print(
+                    f"  安装失败："
+                    f"{result.stderr.splitlines()[-1] if result.stderr else '未知错误'}"
+                )
         else:
             print("  安装成功")
 
@@ -89,6 +138,8 @@ def main():
             print("可从 https://aka.ms/vs/17/release/vc_redist.x64.exe 下载安装后重试。")
     else:
         print("\n所有依赖已就绪。")
+        if "openwakeword" not in still_missing:
+            download_hey_computer_model()
 
     input("\n按回车退出...")
 
