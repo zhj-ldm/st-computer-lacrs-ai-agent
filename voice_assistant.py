@@ -36,7 +36,7 @@ SILENCE_FRAMES = int(SILENCE_SEC / CHUNK_DURATION)
 
 # ── 唤醒词 ────────────────────────────────────
 WAKE_WORD = "hey_computer"
-WAKE_MODEL_PATH = r"C:\Users\zhaoz\AppData\Local\Programs\Python\Python39\Lib\site-packages\openwakeword\resources\models\hey_computer.onnx"
+WAKE_MODEL_PATH = os.path.join(DATA_DIR, "hey_computer.onnx")
 WAKE_THRESHOLD = 0.15
 
 # ── API ───────────────────────────────────────
@@ -277,15 +277,47 @@ def handle_command(cmd_type, payload, current_conv_id):
     return (None, None)
 
 
+def _clean_for_tts(text):
+    """去掉 Markdown 和特殊符号，只保留 TTS 可朗读的纯文字"""
+    import re
+    # 去掉图片语法 ![alt](url)
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+    # 去掉链接语法 [text](url)，保留链接文字
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # 去掉行内代码 `code`
+    text = re.sub(r'`[^`]+`', '', text)
+    # 去掉加粗/斜体标记 ** * ~~
+    text = re.sub(r'\*{1,3}', '', text)
+    text = re.sub(r'~~', '', text)
+    # 去掉标题 # 标记（行首的 # 及空格）
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # 去掉无序列表标记 - * +（行首）
+    text = re.sub(r'^[\-\*\+]\s+', '', text, flags=re.MULTILINE)
+    # 去掉有序列表标记 1. 2. 等
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+    # 去掉水平线 --- ***
+    text = re.sub(r'^[\-\*]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # 去掉表格分隔符 |
+    text = text.replace('|', ' ')
+    # 去掉 HTML 标签 <...>
+    text = re.sub(r'<[^>]+>', '', text)
+    # 去掉反引号代码块标记 ```
+    text = text.replace('```', '')
+    # 多个连续空行压缩为单个换行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # 去掉行首行尾空白
+    text = text.strip()
+    return text
+
 def send_to_ai(conv_id, text):
-    """发送消息给 AI，返回回复文本"""
+    """发送消息给 AI，返回 (回复文本, 工具步骤列表)"""
     r = requests.post(f"{API_BASE}/api/chat",
                       json={"message": text, "conversation_id": conv_id},
                       timeout=120)
     data = r.json()
     if data.get("error"):
-        return f"错误: {data['error']}"
-    return data.get("reply", "")
+        return f"错误: {data['error']}", []
+    return data.get("reply", ""), data.get("tool_steps", [])
 
 
 # ═══════════════════════════════════════════════
@@ -421,6 +453,7 @@ class VoiceAssistant:
 
     def speak(self, text):
         """后台异步朗读，不阻塞主循环（通过 self.tts_stop_flag 支持语音打断）"""
+        text = _clean_for_tts(text)
         if not text or not text.strip():
             return
 
@@ -445,7 +478,7 @@ class VoiceAssistant:
                     except Exception:
                         break
                     # 2秒强制退出，回到监听
-                    if time.time() - t0 > 2.0:
+                    if time.time() - t0 > 5.0:
                         try:
                             rs = self.tts.Status.RunningState
                         except:
@@ -778,7 +811,7 @@ class VoiceAssistant:
                     print("[AI] 发送中 ...")
                     self.speaking = True
                     play_wav(os.path.join(DATA_DIR, "complete.wav"))
-                    reply = send_to_ai(conv_id, text)
+                    reply, tool_steps = send_to_ai(conv_id, text)
 
                     # 处理 AI 工具调用产生的副作用（TTS 配置变更 / 对话切换）
                     new_cid, action_note = self._apply_pending_actions(conv_id)
@@ -788,6 +821,14 @@ class VoiceAssistant:
                     if action_note:
                         print(f"[动作] {action_note}")
 
+                    for step in tool_steps:
+                        print(f"[步骤] {step}")
+                        # 密码验证音效：步骤中检测"PASSWORD_REQUIRED"→错误
+                        if "PASSWORD_REQUIRED" in step:
+                            play_wav(os.path.join(DATA_DIR, "error.wav"))
+                    # 密码正确：从 AI 回复中检测"密码正确"→验证音效
+                    if "密码正确" in reply:
+                        play_wav(os.path.join(DATA_DIR, "command_code_verify.wav"))
                     print(f"[AI] {reply}")
                     self._stop_energy_frames = 0
                     self.tts_stop_flag = False
@@ -799,6 +840,30 @@ class VoiceAssistant:
                                           frames_per_buffer=CHUNK_SIZE)
                     # 注意：self.speaking 保持 True，由主循环判断 TTS 是否结束
 
+            except OSError as e:
+                # 音频设备异常，自动重建 stream，失败则循环重试
+                errno = getattr(e, 'errno', 'N/A')
+                print(f"[音频] 设备异常 (errno={errno})，重建音频流 ...")
+                traceback.print_exc()
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                for attempt in range(1, 11):
+                    try:
+                        time.sleep(2)
+                        stream = self.pa.open(format=FORMAT, channels=CHANNELS,
+                                              rate=SAMPLE_RATE, input=True,
+                                              frames_per_buffer=CHUNK_SIZE)
+                        if self.oww is not None:
+                            self.oww.reset()
+                        print(f"[音频] 音频流已重建（第 {attempt} 次尝试）")
+                        break
+                    except Exception as e2:
+                        print(f"[音频] 重建失败（第 {attempt} 次）: {e2}")
+                        if attempt == 10:
+                            print("[音频] 重建 10 次均失败，退出监听")
+                            self.running = False
             except Exception as e:
                 traceback.print_exc()
                 time.sleep(0.5)

@@ -1,9 +1,11 @@
 import json
 import os
+import shutil
 import sys
 import subprocess
 import uuid
 import time
+from datetime import datetime
 import requests
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 
@@ -45,7 +47,34 @@ SYSTEM_PROMPT = (
     f"你是运行在 Windows 上的 AI 助手，可以操作文件和执行命令。"
     f"用户主目录是 {HOME}。路径映射：\n{PATH_LINES}\n"
     "用户说简称时自动转为完整路径。"
+    "注意：语音识别可能把'D盘'转成'地盘'，一律理解为 D:\\；'C盘'→ C:\\；以此类推。"
     "始终使用简体中文回复，不要使用繁体中文。"
+    "\n\n"
+    "【格式规则】\n"
+    "每次回复必须是自然语言句子，严禁输出 JSON 数组、代码块、或纯文件路径。\n"
+    "收到用户确认（如'对'、'就是这个'、'删第二个'）后必须立即调用对应工具执行，禁止只描述而不行动。\n"
+    "删除文件时：如果密码验证通过（文件成功删除），回复中必须包含'密码正确'字样；如果密码未验证（需要用户提供密码），照常提示即可。\n"
+    "不要凭对话记忆回答文件位置，每次都必须搜索/列出目录来确认。\n"
+    "\n"
+    "【文件查找规则】\n"
+    "当用户提到的文件名不精确（如'那个报告'、'前几天的XX'、'Enterprise什么什么'），必须先用 search_files 模糊搜索，找到实际文件后再操作。禁止直接说'找不到'，先搜再说。\n"
+    "search_files 支持模糊匹配，关键词给短一点（如'Enterprise'、'报告'）命中率更高。\n"
+    "\n"
+    "【重要规则 - 必须联网搜索的情况】\n"
+    "1. 当前时间/日期 → 调用 get_current_time；天气 → 调用 get_weather；新闻/股价/汇率/赛事比分等 → 调用 web_search，不要凭训练数据回答。\n"
+    "2. 任何你不确定、不知道或知识可能过时的问题 → 必须调用 web_search\n"
+    "3. 用户问'XX是什么'、'XX是谁'、'XX是什么意思'等定义/解释类问题 → 必须调用 web_search\n"
+    "4. 用户提问模糊或不准确时 → 先搜再答，不要直接说不知道\n"
+    "5. 只有你非常确定的基础常识（如数学定理、编程语法、科学定律）才可以不搜直接答\n"
+    "6. 搜索结果为空时，尝试换一组关键词再搜一次，实在搜不到再告诉用户"
+    "\n\n"
+    "【工具调用规则 - 严格遵守】\n"
+    "1. 每次对话最多调用 2 轮工具，之后必须给出最终回答\n"
+    "2. 一轮指：你调用工具 → 收到结果 → 判断。如果结果已足够回答就立刻输出答案，不要再继续调用\n"
+    "3. web_search 返回的结果中如果已经包含答案（如天气数据、温度），直接据此回答，禁止重复搜索\n"
+    "4. 禁止对同一问题用不同关键词反复搜索，也禁止搜完又用 web_fetch 去抓同一页面\n"
+    "5. 拿到工具结果后，请直接总结要点回答用户，不要追加废话\n"
+    "6. 【强制】web_search 返回的结果就是答案来源，必须根据返回内容回答，严禁说「找不到」「不知道」或「无法获取」。只要工具返回了内容（哪怕是一条），你就必须总结回答。只有工具返回为空字符串时才能说搜不到。"
 )
 
 # ── 工具定义 ──────────────────────────────────────────────
@@ -54,15 +83,41 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_current_time",
+            "description": "获取当前系统时间和日期。用户问'几点了'、'今天几号'、'现在什么时间'等必须调用此工具，不要凭训练数据回答。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
-            "description": "联网搜索，返回标题、链接和摘要。",
+            "description": "联网搜索实时信息。用于查天气、新闻、股价、名词解释、事件、任何你不确定的知识。返回链接列表和摘要。如果搜索结果摘要不足以回答用户问题（如天气需要温度数值），请用 web_fetch 抓取具体页面。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "max_results": {"type": "integer", "description": "结果数量，默认 5"},
+                    "query": {"type": "string", "description": "搜索关键词，中文问题用中文搜，英文专有名词保留英文"},
+                    "max_results": {"type": "integer", "description": "结果数量，默认 5，信息不足时可增加到 8-10"},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "抓取指定网页的正文内容。当 web_search 返回的摘要不够详细时（如天气没有具体温度），用来获取完整信息。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要抓取的网页 URL"},
+                },
+                "required": ["url"],
             },
         },
     },
@@ -211,6 +266,52 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "在目录中模糊搜索文件。用户说'那个文件'、'某报告'、'前几天的XX'等不精确说法时，先用本工具找到实际文件。支持文件名部分匹配和相似度匹配。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "dir_path": {"type": "string", "description": "搜索目录路径，如 D:\\、C:\\Users\\zhaoz\\Documents"},
+                    "keyword": {"type": "string", "description": "文件名关键词，给短一点命中率高，如 'Enterprise'、'报告'"},
+                    "recursive": {"type": "boolean", "description": "是否递归搜索子目录，默认 true"},
+                    "max_results": {"type": "integer", "description": "最多返回数量，默认 15"},
+                },
+                "required": ["dir_path", "keyword"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": "移动文件或目录到指定位置。需要用户用英文说 confirm 确认。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "源文件/目录路径"},
+                    "dest": {"type": "string", "description": "目标路径"},
+                },
+                "required": ["source", "dest"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "删除文件或目录（移至回收站）。需要安全密码验证——密码从当前用户消息中自动提取，你不需要传 password 参数，也不要从对话历史中查找密码。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_paths": {"type": "string", "description": "要删除的文件/目录路径列表，JSON 数组格式，如 [\"C:/a.txt\"]"},
+                },
+                "required": ["file_paths"],
+            },
+        },
+    },
 ]
 
 DANGEROUS = [
@@ -218,17 +319,157 @@ DANGEROUS = [
     "shutdown", "reboot", "halt", "poweroff", "chmod 777 /", "chown -R",
 ]
 
+# ── 确认机制 ──────────────────────────────────────────────
+
+PENDING_OPS = {}       # {conv_id: {"move:src->dst": {"source","dest","time"}, ...}}
+_current_conv_id = ""
+_current_user_message = ""
+
+CN_DIGITS = {"零": "0", "一": "1", "二": "2", "两": "2", "三": "3", "四": "4",
+             "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
+
+def _extract_digits(text):
+    """从语音识别文本中提取数字序列（支持中文数字和阿拉伯数字）"""
+    text = text.lower().replace(" ", "").replace("，", "").replace(",", "")
+    # 先替换中文数字
+    for cn, digit in CN_DIGITS.items():
+        text = text.replace(cn, digit)
+    # 提取连续数字
+    digits = "".join(c for c in text if c.isdigit())
+    return digits
+
+def _check_password(user_message):
+    """检查用户消息中是否包含正确的安全密码"""
+    digits = _extract_digits(user_message)
+    password = CFG.get("security", {}).get("password", "")
+    if not password:
+        return False
+    return digits == password
+
+def _is_confirmed_in_english(text):
+    """检查文本中是否包含英文确认词"""
+    text_lower = text.lower().strip().rstrip("。.！!？?")
+    confirm_words = ["confirm", "yes", "proceed", "ok", "okay", "sure", "go ahead", "do it"]
+    # 精确匹配：整个短语是确认词，或包含独立确认词
+    for w in confirm_words:
+        if text_lower == w or text_lower.startswith(w + " ") or f" {w}" in text_lower:
+            return True
+    return False
+
 # ── 工具执行 ──────────────────────────────────────────────
+
+def _get_current_time():
+    """返回当前系统时间"""
+    now = datetime.now()
+    weekday_cn = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    return f"{now.year}年{now.month}月{now.day}日 {weekday_cn[now.weekday()]} {now.hour}:{now.minute:02d}:{now.second:02d}"
 
 def _web_search(query, max_results=5):
     if not query:
         return "关键词为空"
-    from ddgs import DDGS
+
     results = []
-    with DDGS() as d:
-        for r in d.text(query, max_results=max(max_results, 1)):
-            results.append(f"- [{r.get('title','')}]({r.get('href','')})\n  {r.get('body','')}")
-    return "\n\n".join(results) if results else "无结果"
+    is_weather = any(kw in query for kw in ["天气", "气温", "温度", "降雨", "风向", "湿度", "weather"])
+
+    # 天气查询：自动追加「天气预报」关键词提高命中率
+    if is_weather and "天气预报" not in query:
+        query = query.replace("天气", "天气预报", 1)
+
+    # ── 方案1: Bing（国内直连可用，优先）──
+    try:
+        import urllib.parse
+        encoded = urllib.parse.quote(query)
+        bing_url = f"https://www.bing.com/search?q={encoded}&setlang=zh-cn&count={max_results}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        resp = requests.get(bing_url, headers=headers, timeout=10)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        items = soup.select("li.b_algo")
+        for item in items[:max_results]:
+            title_el = item.select_one("h2 a")
+            body_el = item.select_one(".b_caption p") or item.select_one(".b_lineclamp2")
+            if title_el:
+                title = title_el.get_text(strip=True)
+                href = title_el.get("href", "")
+                body = body_el.get_text(strip=True) if body_el else ""
+                results.append(f"- [{title}]({href})\n  {body}")
+
+        # 天气查询：自动抓取首个天气站点的详细数据
+        WEATHER_SITES = ["msn.cn/weather", "tianqi.com", "weather.com.cn", "nmc.cn",
+                         "qweather.com", "weather.gov.cn", "accuweather.com"]
+        if is_weather and results:
+            top_weather_url = None
+            for item in items[:5]:
+                a = item.select_one("h2 a")
+                if a:
+                    href = a.get("href", "")
+                    if any(site in href for site in WEATHER_SITES):
+                        top_weather_url = href
+                        break
+            if top_weather_url:
+                try:
+                    wr = requests.get(top_weather_url, headers=headers, timeout=8)
+                    wr.encoding = wr.apparent_encoding or "utf-8"
+                    ws = BeautifulSoup(wr.text, "html.parser")
+                    for tag in ws(["script", "style", "nav", "footer", "header", "aside"]):
+                        tag.decompose()
+                    wtext = ws.get_text(separator="\n", strip=True)
+                    wlines = [l for l in wtext.split("\n") if l.strip()]
+                    # 只保留包含数字温度/天气的行
+                    filtered = []
+                    for line in wlines:
+                        if len(line) > 80:
+                            continue
+                        if any(c in line for c in "°℃度晴阴雨雪风温湿"):
+                            filtered.append(line)
+                    if filtered:
+                        wdata = "\n".join(filtered[:40])
+                    else:
+                        wdata = "\n".join(wlines[:60])
+                    if wdata:
+                        results.append(f"---\n天气详情（自动抓取自天气网站）:\n{wdata}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # ── 方案2: DuckDuckGo 兜底（海外网络可用时）──
+    if not results:
+        try:
+            from ddgs import DDGS
+            with DDGS(timeout=6) as d:
+                for r in d.text(query, max_results=max(max_results, 1)):
+                    results.append(f"- [{r.get('title','')}]({r.get('href','')})\n  {r.get('body','')}")
+        except Exception:
+            pass
+
+    if not results:
+        return "搜索无结果，建议换个关键词重试（如：'今天深圳天气' 或 'open claw 是什么'）"
+    return "\n\n".join(results)
+
+def _web_fetch(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=12)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or "utf-8"
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # 去除脚本和样式
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        # 去重空行
+        lines = [l for l in text.split("\n") if l.strip()]
+        return "\n".join(lines[:200])  # 最多 200 行
+    except Exception as e:
+        return f"抓取失败: {e}"
 
 def _read_file(file_path):
     p = os.path.expanduser(file_path)
@@ -386,8 +627,109 @@ def _delete_conversation(keyword):
     _pending_action({"type": "delete_conv", "conv_id": target["id"], "title": target["title"]})
     return f"已删除对话「{target['title']}」(ID: {target['id']})"
 
+def _search_files(dir_path, keyword, recursive=True, max_results=15):
+    """模糊搜索文件：先 glob 匹配，再用相似度兜底"""
+    import fnmatch
+    import difflib
+
+    p = os.path.expanduser(dir_path)
+    if not os.path.isdir(p):
+        return f"目录不存在: {p}"
+
+    kw = keyword.lower()
+    pattern = f"*{kw}*"
+    results = []
+
+    def _walk():
+        if recursive:
+            for root, dirs, files in os.walk(p):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for f in files:
+                    if not f.startswith("."):
+                        yield os.path.join(root, f)
+                if len(results) >= max_results * 3:
+                    break
+        else:
+            for f in sorted(os.listdir(p)):
+                if not f.startswith("."):
+                    full = os.path.join(p, f)
+                    if os.path.isfile(full):
+                        yield full
+
+    # 第一轮：glob 模式匹配
+    for full in _walk():
+        fname = os.path.basename(full).lower()
+        if fnmatch.fnmatch(fname, pattern):
+            results.append(full)
+        if len(results) >= max_results:
+            break
+
+    # 第二轮：相似度兜底
+    if not results:
+        all_files = list(_walk())[:500]
+        scored = [(difflib.SequenceMatcher(None, kw, os.path.basename(f).lower()).ratio(), f)
+                   for f in all_files]
+        scored.sort(reverse=True)
+        results = [f for s, f in scored[:max_results] if s > 0.3]
+
+    if not results:
+        return f"在 {p} 中未找到匹配 '{keyword}' 的文件"
+
+    lines = [f"找到 {len(results)} 个匹配 '{keyword}' 的文件:"]
+    for r in results[:max_results]:
+        lines.append(f"- {r}")
+    return "\n".join(lines)
+
+def _move_file(source, dest):
+    """移动文件/目录，需要英文确认"""
+    global PENDING_OPS
+    cid = _current_conv_id
+    op_key = f"move:{source}->{dest}"
+
+    if cid in PENDING_OPS and op_key in PENDING_OPS[cid]:
+        if _is_confirmed_in_english(_current_user_message):
+            del PENDING_OPS[cid][op_key]
+            if not PENDING_OPS[cid]:
+                del PENDING_OPS[cid]
+            try:
+                shutil.move(source, dest)
+                return f"已移动: {source} -> {dest}"
+            except Exception as e:
+                return f"移动失败: {e}"
+        else:
+            del PENDING_OPS[cid][op_key]
+            if not PENDING_OPS[cid]:
+                del PENDING_OPS[cid]
+            return "操作已取消"
+
+    PENDING_OPS.setdefault(cid, {})[op_key] = {
+        "source": source, "dest": dest, "time": time.time()
+    }
+    return f"CONFIRM_REQUIRED:move|将 {source} 移动到 {dest}。请用英文说 confirm 确认此操作"
+
+def _delete_file(file_paths):
+    """删除文件/目录到回收站，需要密码验证（从当前用户消息中提取）"""
+    if not _check_password(_current_user_message):
+        return f"PASSWORD_REQUIRED:delete|将 {file_paths} 移至回收站。请读出安全密码以确认"
+
+    try:
+        paths = json.loads(file_paths) if isinstance(file_paths, str) else file_paths
+        sent = 0
+        for p in paths:
+            if os.path.exists(p):
+                from send2trash import send2trash
+                send2trash(p)
+                sent += 1
+        return f"已将 {sent} 个项目移至回收站"
+    except ImportError:
+        return "send2trash 模块未安装，请先 pip install send2trash"
+    except Exception as e:
+        return f"删除失败: {e}"
+
 EXECUTORS = {
+    "get_current_time": _get_current_time,
     "web_search": _web_search,
+    "web_fetch": _web_fetch,
     "read_file": _read_file,
     "write_file": _write_file,
     "list_directory": _list_dir,
@@ -399,6 +741,9 @@ EXECUTORS = {
     "create_new_conversation": _create_new_conversation,
     "switch_conversation": _switch_conversation,
     "delete_conversation": _delete_conversation,
+    "move_file": _move_file,
+    "delete_file": _delete_file,
+    "search_files": _search_files,
 }
 
 # ── 对话存储 ──────────────────────────────────────────────
@@ -442,8 +787,13 @@ def create_conversation(title="新对话"):
 
 # ── API 调用 ──────────────────────────────────────────────
 
-def call_api(messages):
-    for _ in range(8):
+def call_api(messages, conv_id="", user_message=""):
+    global _current_conv_id, _current_user_message
+    _current_conv_id = conv_id
+    _current_user_message = user_message
+    tool_steps = []
+
+    for _ in range(20):
         resp = requests.post(
             f"{API_BASE}/chat/completions",
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
@@ -456,6 +806,8 @@ def call_api(messages):
 
         if msg.get("tool_calls"):
             messages.append(msg)
+            needs_interrupt = False
+            interrupt_msg = ""
             for tc in msg["tool_calls"]:
                 name = tc["function"]["name"]
                 try:
@@ -467,11 +819,51 @@ def call_api(messages):
                     result = fn(**args) if fn else f"未知工具: {name}"
                 except Exception as e:
                     result = f"工具执行异常: {e}"
+
+                # 记录步骤
+                step_summary = _step_summary(name, args, result)
+                tool_steps.append(step_summary)
+
+                # 拦截确认/密码请求，立即返回给用户
+                if result.startswith("CONFIRM_REQUIRED:") or result.startswith("PASSWORD_REQUIRED:"):
+                    needs_interrupt = True
+                    interrupt_msg = result.split("|", 1)[1] if "|" in result else result
+
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+
+            if needs_interrupt:
+                return interrupt_msg, tool_steps
             continue
 
-        return msg.get("content", "")
-    return "工具调用轮数超限，请简化请求。"
+        return msg.get("content", ""), tool_steps
+    return "工具调用轮数超限，请简化请求。", tool_steps
+
+def _step_summary(name, args, result):
+    """生成工具调用步骤的摘要文本"""
+    if name == "delete_file":
+        return f"[工具] 删除文件: {args.get('file_paths','?')} → {result[:80]}"
+    elif name == "move_file":
+        return f"[工具] 移动文件: {args.get('source','?')} → {args.get('dest','?')} → {result[:80]}"
+    elif name == "web_search":
+        q = args.get("query", "?")
+        ok = "完成" if result else "无结果"
+        return f"[工具] 搜索: {q[:40]} → {ok}"
+    elif name == "web_fetch":
+        return f"[工具] 抓取网页: {args.get('url','?')[:60]} → {result[:60]}"
+    elif name == "get_current_time":
+        return f"[工具] 获取时间 → {result}"
+    elif name == "get_weather":
+        return f"[工具] 查询天气: {args.get('city','?')} → {result[:60]}"
+    elif name == "read_file":
+        return f"[工具] 读取文件: {args.get('file_path','?')} → {result[:60]}"
+    elif name == "write_file":
+        return f"[工具] 写入文件: {args.get('file_path','?')}"
+    elif name == "list_directory":
+        return f"[工具] 列出目录: {args.get('dir_path','?')}"
+    elif name == "run_shell":
+        return f"[工具] 执行命令: {args.get('command','?')[:60]} → {result[:60]}"
+    else:
+        return f"[工具] {name} → {result[:80]}"
 
 # ── 路由 ──────────────────────────────────────────────────
 
@@ -523,7 +915,7 @@ def chat():
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [{"role": "user", "content": user_message}]
 
         try:
-            reply = call_api(messages)
+            reply, tool_steps = call_api(messages, conv_id, user_message)
         except requests.exceptions.Timeout:
             return jsonify({"error": "请求超时"}), 504
         except requests.exceptions.RequestException as e:
@@ -538,7 +930,7 @@ def chat():
         conv["messages"] = history
         save_conversation(conv)
 
-        return jsonify({"reply": reply, "conversation_id": conv_id, "title": conv["title"]})
+        return jsonify({"reply": reply, "conversation_id": conv_id, "title": conv["title"], "tool_steps": tool_steps})
     except Exception as e:
         return jsonify({"error": f"服务器内部错误: {e}"}), 500
 

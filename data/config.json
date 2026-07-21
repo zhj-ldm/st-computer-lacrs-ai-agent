@@ -6,19 +6,22 @@
         "下载": "C:\\Users\\zhaoz\\Downloads",
         "项目": "D:\\DESK-P\\develop"
     },
+    "security": {
+        "password": "9472"
+    },
     "api": {
         "base": "",
         "key": "",
         "model": ""
     },
     "tts": {
-        "voice": "[OneCore] Microsoft Yaoyao - Chinese (Simplified, PRC)",
+        "voice": "",
         "rate": 2,
         "processing_rate": 1,
         "volume": 100
     },
     "wake": {
-        "threshold": 0.1,
+        "threshold": 0.08,
         "silence_threshold": 350,
         "silence_sec": 3.5,
         "stop_energy_threshold": 1200
