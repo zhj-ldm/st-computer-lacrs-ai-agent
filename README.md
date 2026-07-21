@@ -30,9 +30,9 @@ star trek ds9 lcars风格 ，类似open claw的AI 语音助手，的支持本地
 │  TTS             Windows SAPI5 (pywin32)            │
 │  音频 I/O        pyaudio                            │
 │  Web 后端        Flask                              │
-│  Web 前端        HTML + 原生 JS (SSE 流式)          │
-│  搜索引擎        DuckDuckGo (ddgs)                  │
-│  运行环境        Windows 10/11, Python 3.9+         │
+│  Web 前端        HTML + 原生 JS (SSE 流式)            │
+│  搜索引擎        DuckDuckGo (ddgs)  ,自建bing爬虫，百度 │
+│  运行环境        Windows 10/11, Python 3.9+           │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -53,7 +53,7 @@ star trek ds9 lcars风格 ，类似open claw的AI 语音助手，的支持本地
                ▼
 ┌─────────────────────────────────────┐
 │  播放提示音 wake_sound.wav           │
-│  录制音频至静音 1.5s 或超时 15s      │
+│  录制音频至静音 3.5s 或超时 20s      │
 └──────────────┬──────────────────────┘
                │
                ▼
