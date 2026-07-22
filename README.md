@@ -231,4 +231,4 @@ python voice_assistant.py
 ## 许可证
 
 见 [LICENSE](LICENSE)。
-*（内容由AI生成，仅供参考）*
+
